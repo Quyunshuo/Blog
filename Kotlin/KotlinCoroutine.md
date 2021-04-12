@@ -1,3 +1,7 @@
+# 前言
+
+> ​		本篇文章是作为我的一个学习记录，写成文章也是为了更好的加深记忆和理解，也是为了分享知识。本文的定位是协程的稍微深入的全面知识，也会示例一些简单的使用，这里不对`suspend`讲解，因为有更好的博文，下文中给出了链接，也不对协程的高级用法做阐述（**热数据通道Channel**、**冷数据流Flow.**..），本文主要讲协程稍微深入的全面知识。
+
 # Kotlin Coroutine 简介
 
 ## Kotlin Coroutine Version
@@ -9,6 +13,16 @@
 ## Kotlin Coroutine 生态
 
 ![协程生态.png](https://p3-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/af760b94ac4f4cab879d55cad89058a6~tplv-k3u1fbpfcp-watermark.image)
+
+kotlin的协程实现分为了两个层次：
+
+* **基础设施层：**
+
+  标准库的协程API，主要对协程提供了概念和语义上最基本的支持
+
+* **业务框架层 kotlin.coroutines：**
+
+  协程的上层框架支持，也是我们日常开发使用的库
 
 ## 接入Coroutine
 
@@ -23,12 +37,177 @@ dependencies {
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.4.3"
     // 协程Java8支持库
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.4.3"
+  
+    // lifecycle对于协程的扩展封装
+    implementation "androidx.lifecycle:lifecycle-viewmodel-ktx:2.2.0"
+    implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.2.0"
+    implementation "androidx.lifecycle:lifecycle-livedata-ktx:2.2.0"
 }
 ```
 
 # Coroutine 基本使用
 
+## suspend
+
+> ​		关于`suspend`挂起函数，这里不展开去讲，因为有更好的博文，那当然是扔物线凯哥的博文，最初我也是跟随凯哥的视频去学习的写成，大家可以去扔物线的网站去学习下协程的 `suspend` 或其他关于协程的知识，下面放上链接：
+>
+> [扔物线 - Kotlin 协程的挂起好神奇好难懂？今天我把它的皮给扒了](https://rengwuxian.com/kotlin-xie-cheng-de-gua-qi/)
+
 ## 创建协程
+
+> ​		创建协程的方式有很多种，这里不延伸协程的高级用法（**热数据通道Channel**、**冷数据流Flow.**..），也许以后会在文章里补充或者新写文章来专门讲解，创建协程这里介绍常用的两种方式：
+>
+> - **CoroutineScope.launch()**
+> - **CoroutineScope.async()**
+>
+> 这是常用的协程创建方式，`launch`函数会返回一个`Job`，`async`返回`Deferred`，也是`Job`的子类，他们返回的都是协程的实例。
+
+### CoroutineScope.launch()
+
+直接上代码：
+
+```kotlin
+import androidx.appcompat.app.AppCompatActivity
+import android.os.Bundle
+import kotlinx.coroutines.*
+
+class MainActivity : AppCompatActivity() {
+
+    /**
+     * 使用官方库的 MainScope()获取一个协程作用域用于创建协程
+     */
+    private val mScope = MainScope()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        // 创建一个默认参数的协程，其默认的调度模式为Main 也就是说该协程的线程环境是Main线程
+        val job1 = mScope.launch {
+            // 这里就是协程体
+
+            // 延迟1000毫秒  delay是一个挂起函数
+            // 在这1000毫秒内该协程所处的线程不会阻塞
+            // 协程将线程的执行权交出去，该线程该干嘛干嘛，到时间后会恢复至此继续向下执行
+            delay(1000)
+        }
+
+        // 创建一个指定了调度模式的协程，该协程的运行线程为IO线程
+        val job2 = mScope.launch(Dispatchers.IO) {
+
+            // 此处是IO线程模式
+
+            // 切线程 将协程所处的线程环境切至指定的调度模式Main
+            withContext(Dispatchers.Main) {
+                // 现在这里就是Main线程了  可以在此进行UI操作了
+            }
+        }
+
+        // 下面直接看一个例子： 从网络中获取数据  并更新UI
+        // 该例子不会阻塞主线程
+        mScope.launch(Dispatchers.IO) {
+            // 执行getUserInfo方法时会将线程切至IO去执行
+            val userInfo = getUserInfo()
+            // 获取完数据后 切至Main线程进行更新UI
+            withContext(Dispatchers.Main) {
+                // 更新UI
+            }
+        }
+    }
+
+    /**
+     * 获取用户信息 该函数模拟IO获取数据
+     * @return String
+     */
+    private suspend fun getUserInfo(): String {
+        return withContext(Dispatchers.IO) {
+            delay(2000)
+            "Kotlin"
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // 取消协程 防止协程泄漏  如果使用lifecycleScope则不需要手动取消
+        mScope.cancel()
+    }
+}
+```
+
+上面的代码中，给出了一些代码示例，其实协程的简单使用非常简单，你甚至完全不需要担心其他的东西，你只需要记得及时取消协程就ok，如果你使用`lifecycleScope`或者`viewModelScope`你连取消都不用自己管，界面或`ViewModel`被销毁时，会自动帮你把协程取消掉。使用协程只需要会创建、会切线程、懂四种调度模式，基本就ok了，基本开发已满足。
+
+### CoroutineScope.async()
+
+async主要用于获取返回值和并发，直接上代码：
+
+```kotlin
+fun asyncTest() {
+    mScope.launch {
+        // 开启一个IO模式的线程 并返回一个Deferred，Deferred可以用来获取返回值
+        // 代码执行到此处时会新开一个协程 然后去执行协程体  父协程的代码会接着往下走
+        val deferred = async(Dispatchers.IO) {
+            // 模拟耗时
+            delay(2000)
+            // 返回一个值
+            "Quyunshuo"
+        }
+        // 等待async执行完成获取返回值 此处并不会阻塞线程  而是挂起 将线程的执行权交出去
+        // 等到async的协程体执行完毕后  会恢复协程继续往下执行
+        val date = deferred.await()
+    }
+}
+```
+
+上面的代码主要展示`async`的返回值功能，需要与`await()`挂起函数结合使用
+
+下面展示`async`的并发能力：
+
+```kotlin
+fun asyncTest2() {
+    mScope.launch {
+        // 此处有一个需求  同时请求5个接口  并且将返回值拼接起来
+
+        val job1 = async {
+            // 请求1 
+            delay(5000)
+            "1"
+        }
+        val job2 = async {
+            // 请求2 
+            delay(5000)
+            "2"
+        }
+        val job3 = async {
+            // 请求3 
+            delay(5000)
+            "3"
+        }
+        val job4 = async {
+            // 请求4 
+            delay(5000)
+            "4"
+        }
+        val job5 = async {
+            // 请求5
+            delay(5000)
+            "5"
+        }
+
+        // 代码执行到此处时  5个请求已经同时在执行了
+        // 等待各job执行完 将结果合并
+        Log.d(
+            "TAG",
+            "asyncTest2: ${job1.await()} ${job2.await()} ${job3.await()} ${job4.await()} ${job5.await()}"
+        )
+
+        // 因为我们设置的模拟时间都是5000毫秒  所以当job1执行完时  其他job也均执行完成
+    }
+}
+```
+
+上面的代码就是一个简单的并发示例，是不是感觉十分的简单，协程的优势立马凸显出来了。
+
+这就是最基本的协程使用，关于作用域，更推荐的是在UI组件中使用`LifecycleOwner.lifecycleScope`，在`ViewModel`中使用`ViewModel.viewModelScope`
 
 # Coroutine的深入
 
@@ -316,7 +495,19 @@ public fun MainScope(): CoroutineScope = ContextScope(SupervisorJob() + Dispatch
 
 ## CoroutineScope - 协程作用域
 
-> ​		`Coroutine` 是轻量级的线程，并不意味着就不消耗系统资源。 当异步操作比较耗时的时候，或者当异步操作出现错误的时候，需要把这个 `Coroutine` 取消掉来释放系统资源。在 Android 环境中，通常每个界面（`Activity`、Fragment 等）启动的 `Coroutine` 只在该界面有意义，如果用户在等待 `Coroutine` 执行的时候退出了这个界面，则再继续执行这个 `Coroutine` 可能是没必要的。另外 `Coroutine` 也需要在适当的 `context` 中执行，否则会出现错误，比如在非 `UI` 线程去访问 `View`。 所以 Coroutine 在设计的时候，要求在一个范围（`Scope`）内执行，这样当这个 Scope 取消的时候，里面所有的`子 Coroutine` 也自动取消。所以要使用 `Coroutine` 必须要先创建一个对应的 `CoroutineScope`。
+> ​		`Coroutine` 是轻量级的线程，并不意味着就不消耗系统资源。 当异步操作比较耗时的时候，或者当异步操作出现错误的时候，需要把这个 `Coroutine` 取消掉来释放系统资源。在 Android 环境中，通常每个界面（`Activity`、Fragment 等）启动的 `Coroutine` 只在该界面有意义，如果用户在等待 `Coroutine` 执行的时候退出了这个界面，则再继续执行这个 `Coroutine` 可能是没必要的。另外 `Coroutine` 也需要在适当的 `context` 中执行，否则会出现错误，比如在非 `UI` 线程去访问 `View`。 所以 Coroutine 在设计的时候，要求在一个范围（`Scope`）内执行，这样当这个 `Scope` 取消的时候，里面所有的`子 Coroutine` 也自动取消。所以要使用 `Coroutine` 必须要先创建一个对应的 `CoroutineScope`。
+
+### **CoroutineScope 接口**
+
+```kotlin
+public interface CoroutineScope {
+    public val coroutineContext: CoroutineContext
+}
+```
+
+`CoroutineScope` 只是定义了一个新 `Coroutine` 的执行 `Scope`。每个 `coroutine builder` 都是 `CoroutineScope` 的扩展函数，并且自动的继承了当前 `Scope` 的 `coroutineContext` 。
+
+### 分类及行为规则
 
 官方框架在实现复合协程的过程中也提供了作用域，主要用以明确写成之间的父子关系，以及对于取消或者异常处理等方面的传播行为。该作用域包括以下三种：
 
@@ -338,11 +529,216 @@ public fun MainScope(): CoroutineScope = ContextScope(SupervisorJob() + Dispatch
 - 父协程需要等待子协程执行完毕之后才会最终进入完成状态，不管父协程自身的协程体是否已经执行完。
 - 子协程会继承父协程的协程上下文中的元素，如果自身有相同`key`的成员，则覆盖对应的`key`，覆盖的效果仅限自身范围内有效。
 
+### 常用作用域
+
+> ​		官方库给我们提供了一些作用域可以直接来使用，并且 Android 的Lifecycle Ktx库也封装了更好用的作用域，下面看一下各种作用域
+
+#### GlobalScope - 不推荐使用
+
+```kotlin
+public object GlobalScope : CoroutineScope {
+    /**
+     * Returns [EmptyCoroutineContext].
+     */
+    override val coroutineContext: CoroutineContext
+        get() = EmptyCoroutineContext
+}
+```
+
+GlobalScope是一个单例实现，源码十分简单，上下文是`EmptyCoroutineContext`，是一个空的上下文，切不包含任何Job，该作用域常被拿来做示例代码，由于 GlobalScope 对象没有和应用生命周期组件相关联，需要自己管理 GlobalScope 所创建的 Coroutine，且`GlobalScope`的生命周期是 process 级别的，所以一般而言我们不推荐使用 GlobalScope 来创建 Coroutine。
+
+#### runBlocking{} - 主要用于测试
+
+```kotlin
+/**
+ * Runs a new coroutine and **blocks** the current thread _interruptibly_ until its completion.
+ * This function should not be used from a coroutine. It is designed to bridge regular blocking code
+ * to libraries that are written in suspending style, to be used in `main` functions and in tests.
+ *
+ * The default [CoroutineDispatcher] for this builder is an internal implementation of event loop that processes continuations
+ * in this blocked thread until the completion of this coroutine.
+ * See [CoroutineDispatcher] for the other implementations that are provided by `kotlinx.coroutines`.
+ *
+ * When [CoroutineDispatcher] is explicitly specified in the [context], then the new coroutine runs in the context of
+ * the specified dispatcher while the current thread is blocked. If the specified dispatcher is an event loop of another `runBlocking`,
+ * then this invocation uses the outer event loop.
+ *
+ * If this blocked thread is interrupted (see [Thread.interrupt]), then the coroutine job is cancelled and
+ * this `runBlocking` invocation throws [InterruptedException].
+ *
+ * See [newCoroutineContext][CoroutineScope.newCoroutineContext] for a description of debugging facilities that are available
+ * for a newly created coroutine.
+ *
+ * @param context the context of the coroutine. The default value is an event loop on the current thread.
+ * @param block the coroutine code.
+ */
+@Throws(InterruptedException::class)
+public fun <T> runBlocking(context: CoroutineContext = EmptyCoroutineContext, block: suspend CoroutineScope.() -> T): T {
+    contract {
+        callsInPlace(block, InvocationKind.EXACTLY_ONCE)
+    }
+    val currentThread = Thread.currentThread()
+    val contextInterceptor = context[ContinuationInterceptor]
+    val eventLoop: EventLoop?
+    val newContext: CoroutineContext
+    if (contextInterceptor == null) {
+        // create or use private event loop if no dispatcher is specified
+        eventLoop = ThreadLocalEventLoop.eventLoop
+        newContext = GlobalScope.newCoroutineContext(context + eventLoop)
+    } else {
+        // See if context's interceptor is an event loop that we shall use (to support TestContext)
+        // or take an existing thread-local event loop if present to avoid blocking it (but don't create one)
+        eventLoop = (contextInterceptor as? EventLoop)?.takeIf { it.shouldBeProcessedFromContext() }
+            ?: ThreadLocalEventLoop.currentOrNull()
+        newContext = GlobalScope.newCoroutineContext(context)
+    }
+    val coroutine = BlockingCoroutine<T>(newContext, currentThread, eventLoop)
+    coroutine.start(CoroutineStart.DEFAULT, coroutine, block)
+    return coroutine.joinBlocking()
+}
+```
+
+这是一个顶层函数，从源码的注释中我们可以得到一些信息，运行一个新的协程并且阻塞当前可中断的线程直至协程执行完成，该函数不应从一个协程中使用，该函数被设计用于桥接普通阻塞代码到以挂起风格（`suspending style`）编写的库，以用于主函数与测试。该函数主要用于测试，不适用于日常开发，该协程会阻塞当前线程直到协程体执行完成。
+
+#### MainScope() - 可用于开发
+
+```kotlin
+/**
+ * Creates the main [CoroutineScope] for UI components.
+ *
+ * Example of use:
+ * ```
+ * class MyAndroidActivity {
+ *     private val scope = MainScope()
+ *
+ *     override fun onDestroy() {
+ *         super.onDestroy()
+ *         scope.cancel()
+ *     }
+ * }
+ * ```
+ *
+ * The resulting scope has [SupervisorJob] and [Dispatchers.Main] context elements.
+ * If you want to append additional elements to the main scope, use [CoroutineScope.plus] operator:
+ * `val scope = MainScope() + CoroutineName("MyActivity")`.
+ */
+@Suppress("FunctionName")
+public fun MainScope(): CoroutineScope = ContextScope(SupervisorJob() + Dispatchers.Main)
+```
+
+该函数是一个顶层函数，用于返回一个上下文是`SupervisorJob() + Dispatchers.Main`的作用域，该作用域常被使用在Activity/Fragment，并且在界面销毁时要调用`fun CoroutineScope.cancel(cause: CancellationException? = null)`对协程进行取消，这是官方库中可以在开发中使用的一个用于获取作用域的顶层函数，使用示例在官方库的代码注释中已经给出，上面的源码中也有，使用起来也是十分的方便。
+
+#### LifecycleOwner.lifecycleScope - 推荐使用
+
+```kotlin
+/**
+ * [CoroutineScope] tied to this [LifecycleOwner]'s [Lifecycle].
+ *
+ * This scope will be cancelled when the [Lifecycle] is destroyed.
+ *
+ * This scope is bound to
+ * [Dispatchers.Main.immediate][kotlinx.coroutines.MainCoroutineDispatcher.immediate].
+ */
+val LifecycleOwner.lifecycleScope: LifecycleCoroutineScope
+    get() = lifecycle.coroutineScope
+```
+
+该扩展属性是 `Android` 的`Lifecycle Ktx`库提供的具有生命周期感知的协程作用域，它与`LifecycleOwner`的`Lifecycle`绑定，Lifecycle被销毁时，此作用域将被取消。这是在`Activity/Fragment`中推荐使用的作用域，因为它会与当前的UI组件绑定生命周期，界面销毁时该协程作用域将被取消，不会造成协程泄漏，相同作用的还有下文提到的`ViewModel.viewModelScope`。
+
+#### ViewModel.viewModelScope - 推荐使用
+
+```kotlin
+/**
+ * [CoroutineScope] tied to this [ViewModel].
+ * This scope will be canceled when ViewModel will be cleared, i.e [ViewModel.onCleared] is called
+ *
+ * This scope is bound to
+ * [Dispatchers.Main.immediate][kotlinx.coroutines.MainCoroutineDispatcher.immediate]
+ */
+val ViewModel.viewModelScope: CoroutineScope
+        get() {
+            val scope: CoroutineScope? = this.getTag(JOB_KEY)
+            if (scope != null) {
+                return scope
+            }
+            return setTagIfAbsent(JOB_KEY,
+                CloseableCoroutineScope(SupervisorJob() + Dispatchers.Main.immediate))
+        }
+```
+
+该扩展属性和上文中提到的`LifecycleOwner.lifecycleScope`基本一致，它是`ViewModel`的扩展属性，也是来自`Android` 的`Lifecycle Ktx`库，它能够在此`ViewModel`销毁时自动取消，同样不会造成协程泄漏。该扩展属性返回的作用域的上下文同样是`SupervisorJob() + Dispatchers.Main.immediate`
+
+####  coroutineScope & supervisorScope
+
+```kotlin
+/**
+ * Creates a [CoroutineScope] with [SupervisorJob] and calls the specified suspend block with this scope.
+ * The provided scope inherits its [coroutineContext][CoroutineScope.coroutineContext] from the outer scope, but overrides
+ * context's [Job] with [SupervisorJob].
+ *
+ * A failure of a child does not cause this scope to fail and does not affect its other children,
+ * so a custom policy for handling failures of its children can be implemented. See [SupervisorJob] for details.
+ * A failure of the scope itself (exception thrown in the [block] or cancellation) fails the scope with all its children,
+ * but does not cancel parent job.
+ */
+public suspend fun <R> supervisorScope(block: suspend CoroutineScope.() -> R): R {
+    contract {
+        callsInPlace(block, InvocationKind.EXACTLY_ONCE)
+    }
+    return suspendCoroutineUninterceptedOrReturn { uCont ->
+        val coroutine = SupervisorCoroutine(uCont.context, uCont)
+        coroutine.startUndispatchedOrReturn(coroutine, block)
+    }
+}
 
 
 
+/**
+ * Creates a [CoroutineScope] and calls the specified suspend block with this scope.
+ * The provided scope inherits its [coroutineContext][CoroutineScope.coroutineContext] from the outer scope, but overrides
+ * the context's [Job].
+ *
+ * This function is designed for _parallel decomposition_ of work. When any child coroutine in this scope fails,
+ * this scope fails and all the rest of the children are cancelled (for a different behavior see [supervisorScope]).
+ * This function returns as soon as the given block and all its children coroutines are completed.
+ * A usage example of a scope looks like this:
+ *
+ * ```
+ * suspend fun showSomeData() = coroutineScope {
+ *     val data = async(Dispatchers.IO) { // <- extension on current scope
+ *      ... load some UI data for the Main thread ...
+ *     }
+ *
+ *     withContext(Dispatchers.Main) {
+ *         doSomeWork()
+ *         val result = data.await()
+ *         display(result)
+ *     }
+ * }
+ * ```
+ *
+ * The scope in this example has the following semantics:
+ * 1) `showSomeData` returns as soon as the data is loaded and displayed in the UI.
+ * 2) If `doSomeWork` throws an exception, then the `async` task is cancelled and `showSomeData` rethrows that exception.
+ * 3) If the outer scope of `showSomeData` is cancelled, both started `async` and `withContext` blocks are cancelled.
+ * 4) If the `async` block fails, `withContext` will be cancelled.
+ *
+ * The method may throw a [CancellationException] if the current job was cancelled externally
+ * or may throw a corresponding unhandled [Throwable] if there is any unhandled exception in this scope
+ * (for example, from a crashed coroutine that was started with [launch][CoroutineScope.launch] in this scope).
+ */
+public suspend fun <R> coroutineScope(block: suspend CoroutineScope.() -> R): R {
+    contract {
+        callsInPlace(block, InvocationKind.EXACTLY_ONCE)
+    }
+    return suspendCoroutineUninterceptedOrReturn { uCont ->
+        val coroutine = ScopeCoroutine(uCont.context, uCont)
+        coroutine.startUndispatchedOrReturn(coroutine, block)
+    }
+}
+```
 
-
+首先这两个函数都是挂起函数，需要运行在协程内或挂起函数内。`supervisorScope`属于主从作用域，会继承父协程的上下文，它的特点就是子协程的异常不会影响父协程，它的设计应用场景多用于子协程为独立对等的任务实体的时候，比如一个下载器，每一个子协程都是一个下载任务，当一个下载任务异常时，它不应该影响其他的下载任务。`coroutineScope`和`supervisorScope`都会返回一个作用域，它俩的差别就是异常传播：`coroutineScope` 内部的异常会向上传播，子协程未捕获的异常会向上传递给父协程，任何一个子协程异常退出，会导致整体的退出；`supervisorScope` 内部的异常不会向上传播，一个子协程异常退出，不会影响父协程和兄弟协程的运行。
 
 # 参考及摘录
 
