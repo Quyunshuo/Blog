@@ -147,7 +147,7 @@ class MainActivity : AppCompatActivity() {
 
 ### CoroutineScope.async()
 
-async主要用于获取返回值和并发，直接上代码：
+`async`主要用于获取返回值和并发，直接上代码：
 
 ```kotlin
 fun asyncTest() {
@@ -777,6 +777,182 @@ public suspend fun <R> coroutineScope(block: suspend CoroutineScope.() -> R): R 
 ```
 
 首先这两个函数都是挂起函数，需要运行在协程内或挂起函数内。`supervisorScope`属于主从作用域，会继承父协程的上下文，它的特点就是子协程的异常不会影响父协程，它的设计应用场景多用于子协程为独立对等的任务实体的时候，比如一个下载器，每一个子协程都是一个下载任务，当一个下载任务异常时，它不应该影响其他的下载任务。`coroutineScope`和`supervisorScope`都会返回一个作用域，它俩的差别就是异常传播：`coroutineScope` 内部的异常会向上传播，子协程未捕获的异常会向上传递给父协程，任何一个子协程异常退出，会导致整体的退出；`supervisorScope` 内部的异常不会向上传播，一个子协程异常退出，不会影响父协程和兄弟协程的运行。
+
+## 协程的取消和异常
+
+> ​		普通协程如果产生未处理异常会将此异常传播至它的父协程，然后父协程会取消所有的子协程、取消自己、将异常继续向上传递。下面拿一个官方的图来示例这个过程：
+
+![coroutine_e.gif](https://p6-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/28647715daef471ebdeef6883d823716~tplv-k3u1fbpfcp-watermark.image)
+
+这种情况有的时候并不是我们想要的，我们更希望一个协程在产生异常时，不影响其他协程的执行，在上文中我们也提到了一些解决方案，下面我们就在实践一下。
+
+**使用SupervisorJob****
+
+在上文中我们也对这个顶层函数做了讲解，那如何使用呢？直接上代码：
+
+```kotlin
+import androidx.appcompat.app.AppCompatActivity
+import android.os.Bundle
+import android.util.Log
+import kotlinx.coroutines.*
+
+class MainActivity : AppCompatActivity() {
+
+    /**
+     * 使用官方库的 MainScope()获取一个协程作用域用于创建协程
+     */
+    private val mScope = MainScope()
+
+    companion object {
+        const val TAG = "Kotlin Coroutine"
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        mScope.launch(Dispatchers.Default) {
+            delay(500)
+            Log.e(TAG, "Child 1")
+        }
+
+        mScope.launch(Dispatchers.Default) {
+            delay(1000)
+            Log.e(TAG, "Child 2")
+            throw RuntimeException("--> RuntimeException <--")
+        }
+
+        mScope.launch(Dispatchers.Default) {
+            delay(1500)
+            Log.e(TAG, "Child 3")
+        }
+    }
+}
+
+
+打印结果：
+E/Kotlin Coroutine: Child 1
+E/Kotlin Coroutine: Child 2
+E/AndroidRuntime: FATAL EXCEPTION: DefaultDispatcher-worker-3
+    Process: com.quyunshuo.kotlincoroutine, PID: 24240
+    java.lang.RuntimeException: --> RuntimeException <--
+        at com.quyunshuo.kotlincoroutine.MainActivity$onCreate$2.invokeSuspend(MainActivity.kt:31)
+        at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+        at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:106)
+        at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:571)
+        at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:750)
+        at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:678)
+        at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:665)
+E/Kotlin Coroutine: Child 3
+```
+
+`MainScope()`我们之前提到过了，它的实现就是用了`SupervisorJob`。执行结果就是***Child 2***抛出异常后，***Child 3***正常执行了，但是程序崩了，因为我们没有处理这个异常，下面完善一下代码
+
+```kotlin
+override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    setContentView(R.layout.activity_main)
+
+    mScope.launch(Dispatchers.Default) {
+        delay(500)
+        Log.e(TAG, "Child 1")
+    }
+
+  	// 在Child 2的上下文添加了异常处理
+    mScope.launch(Dispatchers.Default + CoroutineExceptionHandler { coroutineContext, throwable ->
+        Log.e(TAG, "CoroutineExceptionHandler: $throwable")
+    }) {
+        delay(1000)
+        Log.e(TAG, "Child 2")
+        throw RuntimeException("--> RuntimeException <--")
+    }
+
+    mScope.launch(Dispatchers.Default) {
+        delay(1500)
+        Log.e(TAG, "Child 3")
+    }
+}
+
+
+输出结果：
+E/Kotlin Coroutine: Child 1
+E/Kotlin Coroutine: Child 2
+E/Kotlin Coroutine: CoroutineExceptionHandler: java.lang.RuntimeException: --> RuntimeException <--
+E/Kotlin Coroutine: Child 3
+```
+
+这一次，程序没有崩溃，并且异常处理的打印也输出了，这就达到了我们想要的效果。但是要注意一个事情，这几个子协程的父级是`SupervisorJob`，但是他们再有子协程的话，他们的子协程的父级就不是SupervisorJob了，所以当它们产生异常时，就不是我们演示的效果了。我们使用一个官方的图来解释这个关系：
+
+![child_job.png](https://p6-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/2364205c632d4282b50c8f2cce6e8df1~tplv-k3u1fbpfcp-watermark.image)
+
+这个图可以说是非常直观了，还是官方🐂。新的协程被创建时，会生成新的 `Job` 实例替代 `SupervisorJob`。
+
+**使用supervisorScope**
+
+这个作用域我们上文中也有提到，使用`supervisorScope`也可以达到我们想要的效果，上代码：
+
+```kotlin
+import androidx.appcompat.app.AppCompatActivity
+import android.os.Bundle
+import android.util.Log
+import kotlinx.coroutines.*
+
+class MainActivity : AppCompatActivity() {
+
+    companion object {
+        const val TAG = "Kotlin Coroutine"
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+
+        scope.launch(CoroutineExceptionHandler { coroutineContext, throwable ->
+            Log.e(TAG, "CoroutineExceptionHandler: $throwable")
+        }) {
+            supervisorScope {
+                launch {
+                    delay(500)
+                    Log.e(TAG, "Child 1 ")
+                }
+                launch {
+                    delay(1000)
+                    Log.e(TAG, "Child 2 ")
+                    throw  RuntimeException("--> RuntimeException <--")
+                }
+                launch {
+                    delay(1500)
+                    Log.e(TAG, "Child 3 ")
+                }
+            }
+        }
+    }
+}
+
+输出结果：
+E/Kotlin Coroutine: Child 1 
+E/Kotlin Coroutine: Child 2 
+E/Kotlin Coroutine: CoroutineExceptionHandler: java.lang.RuntimeException: --> RuntimeException <--
+E/Kotlin Coroutine: Child 3 
+```
+
+可以看到已经达到了我们想要的效果，但是如果将`supervisorScope`换成`coroutineScope`，结果就不是这样了。最终还是拿官方的图来展示：
+
+![ok.png](https://p6-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/dc9d14675c674fbc92da15e8590c50f8~tplv-k3u1fbpfcp-watermark.image)
+
+# 结语
+
+> 至此文章就已经结束，本文主要是我学习协程的一些记录，分享出来供大家翻阅一下，大家好才是真的好。里面有很多的描述都是摘录自别的文章的，下面也给出了链接，其实官方的文章已经将协程的使用讲的非常全面了，大家可以翻阅一下官方的文章进行学习，虽然可能描述的不是很详细，但是该有的细节都提到了。
+>
+> ​		后续有时间可能会出一些协程的高级用法的文章，比如协程的冷数据流Flow，这个在我们的项目里也已经用上了，没错，是我引入的😁。总体来说，协程简单使用非常简单，但是想用好，还是需要下一定的功夫去研究的，但是还是逃不过真香定律，大家赶紧学习用起来吧。
+
+**我的其他文章**：
+
+- [一个 Android MVVM 组件化架构框架](https://juejin.cn/post/6866628586414997512)
+- [解锁管理EventBus注册新姿势——自定义注解+反射](https://juejin.cn/post/6945058494550638629)
+- [万字长文 - 史上最全ConstraintLayout（约束布局）使用详解](https://juejin.cn/post/6949186887609221133)
 
 # 参考及摘录
 
