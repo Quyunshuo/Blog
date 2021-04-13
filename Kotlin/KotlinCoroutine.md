@@ -232,7 +232,7 @@ public fun CoroutineScope.launch(
 
 ## CoroutineContext - 协程上下文
 
-> ​		`CoroutineContext`即协程的上下文，是 Kotlin 协程的一个基本结构单元。巧妙的运用协程上下文是至关重要的，以此来实现正确的线程行为、生命周期、异常以及调试。它包含用户定义的一些数据集合，这些数据与协程密切相关。它是一个有索引的 `Element` 实例集合。这个有索引的集合类似于一个介于 `set` 和 map之间的数据结构。每个 `element` 在这个集合有一个唯一的 Key 。当多个 `element` 的 key 的引用相同，则代表属于集合里同一个 `element`。`CoroutineContext` 有两个非常重要的元素 — `Job` 和 `Dispatcher`，`Job` 是当前的 `Coroutine` 实例而 Dispatcher 决定了当前 `Coroutine` 执行的线程，还有一个元素是`CoroutineName`，用于调试，它们三者都实现了`Element`接口。看一个例子：
+> ​		`CoroutineContext`即协程的上下文，是 Kotlin 协程的一个基本结构单元。巧妙的运用协程上下文是至关重要的，以此来实现正确的线程行为、生命周期、异常以及调试。它包含用户定义的一些数据集合，这些数据与协程密切相关。它是一个有索引的 `Element` 实例集合。这个有索引的集合类似于一个介于 `set` 和 map之间的数据结构。每个 `element` 在这个集合有一个唯一的 Key 。当多个 `element` 的 key 的引用相同，则代表属于集合里同一个 `element`。`CoroutineContext` 有两个非常重要的元素 — `Job` 和 `Dispatcher`，`Job` 是当前的 `Coroutine` 实例而 Dispatcher 决定了当前 `Coroutine` 执行的线程，还可以添加`CoroutineName`，用于调试，添加 `CoroutineExceptionHandler` 用于捕获异常，它们都实现了`Element`接口。看一个例子：
 
 ```kotlin
 fun main() {
@@ -442,6 +442,8 @@ public fun SupervisorJob(parent: Job? = null) : CompletableJob = SupervisorJobIm
 @Suppress("FunctionName")
 public fun MainScope(): CoroutineScope = ContextScope(SupervisorJob() + Dispatchers.Main)
 ```
+
+但是`SupervisorJob`是很容易被误解的，它和协程异常处理、子协程所属`Job`类型还有域有很多让人混淆的地方，具体异常处理可以看Google的这一篇文章：[协程中的取消和异常 | 异常处理详解](https://blog.csdn.net/jILRvRTrc/article/details/107437548)
 
 ## CoroutineDispatcher - 调度器
 
