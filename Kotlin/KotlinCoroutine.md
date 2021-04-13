@@ -4,6 +4,15 @@
 
 # Kotlin Coroutine 简介
 
+> ​		**Kotlin** 中的协程提供了一种全新处理并发的方式，您可以在 **Android** 平台上使用它来简化异步执行的代码。协程是从 **Kotlin 1.3** 版本开始引入，但这一概念在编程世界诞生的黎明之际就有了，最早使用协程的编程语言可以追溯到 **1967** 年的 **Simula** 语言。
+>
+> ​		在过去几年间，协程这个概念发展势头迅猛，现已经被诸多主流编程语言采用，比如 **Javascript**、**C#**、**Python**、Ruby 以及 **Go** 等。**Kotlin** 的协程是基于来自其他语言的既定概念。
+>
+> ​		在 **Android** 平台上，协程主要用来解决两个问题: 
+>
+> - **处理耗时任务 (Long running tasks)**，这种任务常常会阻塞住主线程；
+> - **保证主线程安全 (Main-safety)** ，即确保安全地从主线程调用任何 **suspend** 函数。
+
 ## Kotlin Coroutine Version
 
 > **Kotlin Version**: 1.4.32
@@ -60,7 +69,7 @@ dependencies {
 > - **CoroutineScope.launch()**
 > - **CoroutineScope.async()**
 >
-> 这是常用的协程创建方式，`launch`函数会返回一个`Job`，`async`返回`Deferred`，也是`Job`的子类，他们返回的都是协程的实例。
+> 这是常用的协程创建方式，**launch** 构建器适合执行 "一劳永逸" 的工作，意思就是说它可以启动新协程而不将结果返回给调用方；**async** 构建器可启动新协程并允许您使用一个名为 `await` 的挂起函数返回 `result`。 **launch** 和 **async** 之间的很大差异是它们对异常的处理方式不同。**async** 期望最终是通过调用 `await` 来获取结果 (或者异常)，所以默认情况下它不会抛出异常。这意味着如果使用 **async** 启动新的协程，它会静默地将异常丢弃。
 
 ### CoroutineScope.launch()
 
@@ -232,7 +241,14 @@ public fun CoroutineScope.launch(
 
 ## CoroutineContext - 协程上下文
 
-> ​		`CoroutineContext`即协程的上下文，是 Kotlin 协程的一个基本结构单元。巧妙的运用协程上下文是至关重要的，以此来实现正确的线程行为、生命周期、异常以及调试。它包含用户定义的一些数据集合，这些数据与协程密切相关。它是一个有索引的 `Element` 实例集合。这个有索引的集合类似于一个介于 `set` 和 map之间的数据结构。每个 `element` 在这个集合有一个唯一的 Key 。当多个 `element` 的 key 的引用相同，则代表属于集合里同一个 `element`。`CoroutineContext` 有两个非常重要的元素 — `Job` 和 `Dispatcher`，`Job` 是当前的 `Coroutine` 实例而 Dispatcher 决定了当前 `Coroutine` 执行的线程，还可以添加`CoroutineName`，用于调试，添加 `CoroutineExceptionHandler` 用于捕获异常，它们都实现了`Element`接口。看一个例子：
+> ​		`CoroutineContext`即协程的上下文，是 Kotlin 协程的一个基本结构单元。巧妙的运用协程上下文是至关重要的，以此来实现正确的线程行为、生命周期、异常以及调试。它包含用户定义的一些数据集合，这些数据与协程密切相关。它是一个有索引的 `Element` 实例集合。这个有索引的集合类似于一个介于 `set` 和 map之间的数据结构。每个 `element` 在这个集合有一个唯一的 Key 。当多个 `element` 的 key 的引用相同，则代表属于集合里同一个 `element`。它由如下几项构成:
+>
+> - **Job**: 控制协程的生命周期；
+> - **CoroutineDispatcher**: 向合适的线程分发任务；
+> - **CoroutineName**: 协程的名称，调试的时候很有用；
+> - **CoroutineExceptionHandler**: 处理未被捕捉的异常。
+>
+> `CoroutineContext` 有两个非常重要的元素 — `Job` 和 `Dispatcher`，`Job` 是当前的 `Coroutine` 实例而 `Dispatcher` 决定了当前 `Coroutine` 执行的线程，还可以添加`CoroutineName`，用于调试，添加 `CoroutineExceptionHandler` 用于捕获异常，它们都实现了`Element`接口。看一个例子：
 
 ```kotlin
 fun main() {
@@ -289,8 +305,22 @@ public interface CoroutineContext {
 
 某些情况需要一个上下文不持有任何元素，此时就可以使用 `EmptyCoroutineContext` 对象。可以预见，添加这个对象到另一个上下文不会对其有任何影响。
 
+> 在任务层级中，每个协程都会有一个父级对象，要么是 `CoroutineScope` 或者另外一个 `coroutine`。然而，实际上协程的父级 `CoroutineContext` 和父级协程的 `CoroutineContext` 是不一样的，因为有如下的公式:
+
+**父级上下文 = 默认值 + 继承的 CoroutineContext + 参数**
+
+其中:
+
+- **一些元素包含默认值: Dispatchers.Default 是默认的 CoroutineDispatcher，以及 "coroutine" 作为默认的 CoroutineName；**
+- **继承的 CoroutineContext 是 CoroutineScope 或者其父协程的 CoroutineContext；**
+- **传入协程 builder 的参数的优先级高于继承的上下文参数，因此会覆盖对应的参数值。**
+
+**请注意:** `CoroutineContext` 可以使用 " + " 运算符进行合并。由于 `CoroutineContext` 是由一组元素组成的，所以加号右侧的元素会覆盖加号左侧的元素，进而组成新创建的 `CoroutineContext`。比如，`(Dispatchers.Main, "name") + (Dispatchers.IO) = (Dispatchers.IO, "name")。`
+
 ## Job & Deferred - 任务
 
+> ​		`Job` 用于处理协程。对于每一个所创建的协程 (通过 `launch` 或者 async)，它会返回一个 `Job`实例，该实例是协程的唯一标识，并且负责管理协程的生命周期
+>
 > ​		`CoroutineScope.launch` 函数返回的是一个 `Job` 对象，代表一个异步的任务。`Job` 具有生命周期并且可以取消。 `Job` 还可以有层级关系，一个`Job`可以包含多个子`Job`，当父`Job`被取消后，所有的子`Job`也会被自动取消；当子`Job`被取消或者出现异常后父`Job`也会被取消。
 >
 > ​		除了通过 `CoroutineScope.launch` 来创建`Job`对象之外，还可以通过 `Job()` 工厂方法来创建该对象。默认情况下，子`Job`的失败将会导致父`Job`被取消，这种默认的行为可以通过 `SupervisorJob` 来修改。
@@ -298,6 +328,10 @@ public interface CoroutineContext {
 > ​		具有多个子 `Job` 的父`Job` 会等待所有子`Job`完成(或者取消)后，自己才会执行完成
 
 ### Job 的状态
+
+> ​		一个任务可以包含一系列状态: 新创建 (**New**)、活跃 (**Active**)、完成中 (**Completing**)、已完成 (Completed)、取消中 (**Cancelling**) 和已取消 (**Cancelled**)。虽然我们无法直接访问这些状态，但是我们可以访问 `Job` 的属性: `isActive`、`isCancelled` 和 `isCompleted`。
+>
+> ​		如果协程处于活跃状态，协程运行出错或者调用 `job.cancel()` 都会将当前任务置为取消中 (**Cancelling**) 状态 (`isActive = false, isCancelled = true`)。当所有的子协程都完成后，协程会进入已取消 (**Cancelled**) 状态，此时 `isCompleted = true`。
 
 | **State**                        | [isActive] | [isCompleted] | [isCancelled] |
 | -------------------------------- | ---------- | ------------- | ------------- |
@@ -321,8 +355,6 @@ public interface CoroutineContext {
              | Cancelling | --------------------------------> | Cancelled |
              +------------+                                   +-----------+
 ```
-
-关于`Job`的状态描述，在`kotlinx.coroutines` 库`Job.kt`的注释中描述的非常清楚
 
 ### Job 的常用函数
 
@@ -451,6 +483,8 @@ public fun MainScope(): CoroutineScope = ContextScope(SupervisorJob() + Dispatch
 >
 > `CoroutineDispatcher` 是一个抽象类，所有 `dispatcher` 都应该继承这个类来实现对应的功能。`Dispatchers` 是一个标准库中帮我们封装了切换线程的帮助类，可以简单理解为一个线程池。它的实现如下：
 
+![dispatchers.webp](https://p3-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/a31f4fca427a4c67b9bbda39ee11887c~tplv-k3u1fbpfcp-watermark.image)
+
 - **Dispatchers.Default**
 
    默认的调度器，适合处理后台计算，是一个`CPU`密集型任务调度器。如果创建 `Coroutine` 的时候没有指定 `dispatcher`，则一般默认使用这个作为默认值。`Default dispatcher` 使用一个共享的后台线程池来运行里面的任务。注意它和`IO`共享线程池，只不过限制了最大并发数不同。
@@ -497,7 +531,9 @@ public fun MainScope(): CoroutineScope = ContextScope(SupervisorJob() + Dispatch
 
 ## CoroutineScope - 协程作用域
 
-> ​		`Coroutine` 是轻量级的线程，并不意味着就不消耗系统资源。 当异步操作比较耗时的时候，或者当异步操作出现错误的时候，需要把这个 `Coroutine` 取消掉来释放系统资源。在 Android 环境中，通常每个界面（`Activity`、Fragment 等）启动的 `Coroutine` 只在该界面有意义，如果用户在等待 `Coroutine` 执行的时候退出了这个界面，则再继续执行这个 `Coroutine` 可能是没必要的。另外 `Coroutine` 也需要在适当的 `context` 中执行，否则会出现错误，比如在非 `UI` 线程去访问 `View`。 所以 Coroutine 在设计的时候，要求在一个范围（`Scope`）内执行，这样当这个 `Scope` 取消的时候，里面所有的`子 Coroutine` 也自动取消。所以要使用 `Coroutine` 必须要先创建一个对应的 `CoroutineScope`。
+> ​		定义协程必须指定其 `CoroutineScope` 。`CoroutineScope` 可以对协程进行追踪，即使协程被挂起也是如此。同调度程序 (`Dispatcher`) 不同，`CoroutineScope` 并不运行协程，它只是确保您不会失去对协程的追踪。为了确保所有的协程都会被追踪，`Kotlin` 不允许在没有使用 `CoroutineScope` 的情况下启动新的协程。`CoroutineScope` 可被看作是一个具有超能力的 `ExecutorService` 的轻量级版本。`CoroutineScope` 会跟踪所有协程，同样它还可以取消由它所启动的所有协程。这在 `Android` 开发中非常有用，比如它能够在用户离开界面时停止执行协程。
+>
+> ​		`Coroutine` 是轻量级的线程，并不意味着就不消耗系统资源。 当异步操作比较耗时的时候，或者当异步操作出现错误的时候，需要把这个 `Coroutine` 取消掉来释放系统资源。在 `Android` 环境中，通常每个界面（`Activity`、`Fragment` 等）启动的 `Coroutine` 只在该界面有意义，如果用户在等待 `Coroutine` 执行的时候退出了这个界面，则再继续执行这个 `Coroutine` 可能是没必要的。另外 `Coroutine` 也需要在适当的 `context` 中执行，否则会出现错误，比如在非 `UI` 线程去访问 `View`。 所以 `Coroutine` 在设计的时候，要求在一个范围（`Scope`）内执行，这样当这个 `Scope` 取消的时候，里面所有的`子 Coroutine` 也自动取消。所以要使用 `Coroutine` 必须要先创建一个对应的 `CoroutineScope`。
 
 ### **CoroutineScope 接口**
 
@@ -747,3 +783,8 @@ public suspend fun <R> coroutineScope(block: suspend CoroutineScope.() -> R): R 
 [掌握Kotlin Coroutine之 Job&Deferred](http://blog.chengyunfeng.com/?p=1087)
 
 霍丙乾 - 《深入理解Kotlin协程》
+
+[谷歌开发者 - 在 Android 开发中使用协程 | 背景介绍](https://mp.weixin.qq.com/s?__biz=MzAwODY4OTk2Mg==&mid=2652052998&idx=2&sn=18715a7e33b7f7a5878bd301e9f8f935&scene=21#wechat_redirect)
+
+[谷歌开发者 - 协程中的取消和异常 | 核心概念介绍](https://mp.weixin.qq.com/s?__biz=MzAwODY4OTk2Mg%3D%3D&chksm=808c8358b7fb0a4ee7ab15a9655543c501b3e1fd7c6c5f84f9e151a58c93264ff74066246696&idx=2&mid=2652054301&scene=21&sn=917dddffbdb4d97f950f70dfc570c021#wechat_redirect)
+
